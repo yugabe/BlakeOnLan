@@ -1,0 +1,78 @@
+﻿@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Builder
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Hosting
+@using Blazored.LocalStorage
+@inject ILocalStorageService LocalStorage
+
+<table class="table table-responsive table-dark m-auto mt-3">
+    @foreach (var mac in Addresses)
+    {
+        <tr>
+            <td><b>@mac.Name</b> - @mac.Value</td>
+            <td>
+                <button class="btn btn-lg btn-outline-light oi oi-power-standby" title="Wake @mac.Name"
+                        @onclick="@(async () => {
+                                                using var client = new System.Net.Sockets.UdpClient("255.255.255.255", 12287) { EnableBroadcast = true };
+                                                await client.SendAsync(Enumerable.Range(0, 6).Select(_ => (byte)255).Concat(Enumerable.Range(0, 16).SelectMany(_ => Enumerable.Range(0, 6).Select(i => Convert.ToByte(mac.Value.Substring(i * 2, 2), 16)))).ToArray(), 102);
+                                            })"></button>
+                <button class="btn btn-lg btn-outline-danger oi oi-circle-x" title="Remove @mac.Name"
+                        @onclick="async () => { Addresses = Addresses.Where(a => a.Name != mac.Name).ToList(); await SaveAsync(); }"></button>
+            </td>
+        </tr>
+    }
+    <tr>
+        <td colspan="2" class="text-center" style="min-width: 250px">
+            @if (ShowAdd)
+            {
+                <form @onsubmit="@(async () => { Addresses.Add(new Mac { Name = NewName, Value = NewAddress }); await SaveAsync(); NewName = NewAddress = ""; })">
+                    <input @bind="NewName" @bind:event="oninput" class="form-control" placeholder="My other PC" />
+                    <input @bind="NewAddress" @bind:event="oninput" class="form-control" placeholder="A1B2C3D4E5F6" />
+                    <button type="submit" class="btn btn-sm btn-outline-primary btn-block oi oi-plus"
+                            disabled="@(string.IsNullOrWhiteSpace(NewName) || string.IsNullOrWhiteSpace(NewAddress) || Addresses.Any(a => string.Compare(a.Name, NewName) == 0) || !System.Text.RegularExpressions.Regex.IsMatch(NewAddress, $"^[{Whitelist}]{{12}}$"))"></button>
+                </form>
+            }
+            <i class="oi oi-chevron-@(ShowAdd ? "top" : "bottom")" style="cursor: pointer" @onclick="() => ShowAdd = !ShowAdd"></i>
+        </td>
+    </tr>
+</table>
+
+@code {
+    const string Whitelist = "0123456789ABCDEF";
+    const string MacAddressesLocalStorageKey = nameof(MacAddressesLocalStorageKey);
+    string NewName { get; set; }
+    string _newAddress;
+    string NewAddress { get => _newAddress ?? ""; set => _newAddress = new string((value ?? "").ToUpper().Where(Whitelist.Contains).Take(12).ToArray()); }
+    List<Mac> Addresses { get; set; } = new List<Mac>();
+    bool ShowAdd { get; set; }
+
+    protected override async Task OnInitializedAsync() => Addresses = (await LocalStorage.GetItemAsync<List<Mac>>(MacAddressesLocalStorageKey)) ?? new List<Mac>();
+
+    async Task SaveAsync() => await LocalStorage.SetItemAsync(MacAddressesLocalStorageKey, Addresses);
+
+    public class Mac
+    {
+        public string Name { get; set; }
+        public string Value { get; set; }
+    }
+
+    [STAThread]
+    public static async Task Main(string[] args) =>
+        await Host.CreateDefaultBuilder(args).ConfigureWebHostDefaults(webBuilder =>
+            webBuilder.ConfigureServices(services =>
+            {
+                services.AddRazorPages();
+                services.AddServerSideBlazor();
+                services.AddBlazoredLocalStorage();
+            }).Configure(app =>
+                app.UseDeveloperExceptionPage()
+                .UseStaticFiles()
+                .UseRouting()
+                    .UseEndpoints(endpoints =>
+                    {
+                        endpoints.MapBlazorHub();
+                        endpoints.MapFallbackToPage("/_Host");
+                    })))
+            .Build().RunAsync();
+}
